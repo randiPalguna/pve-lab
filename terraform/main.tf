@@ -19,7 +19,7 @@ provider "proxmox" {
   random_vm_ids = true
 }
 
-resource "proxmox_virtual_environment_container" "alpine_template" {
+resource "proxmox_virtual_environment_container" "debian_template" {
   node_name     = var.pve_node_name
   template      = true
   started       = false
@@ -36,6 +36,7 @@ resource "proxmox_virtual_environment_container" "alpine_template" {
     }
     user_account {
       password = var.ct_password
+      keys     = [trimspace(file("~/.ssh/id_ed25519.pub"))]
     }
   }
 
@@ -59,16 +60,16 @@ resource "proxmox_virtual_environment_container" "alpine_template" {
   }
 
   operating_system {
-    template_file_id = proxmox_download_file.alpine_3-23_lxc_img.id
-    type             = "alpine"
+    template_file_id = proxmox_download_file.debian_13_lxc_img.id
+    type             = "debian"
   }
 }
 
-resource "proxmox_download_file" "alpine_3-23_lxc_img" {
+resource "proxmox_download_file" "debian_13_lxc_img" {
   content_type = "vztmpl"
   datastore_id = "local"
   node_name    = var.pve_node_name
-  url          = "http://download.proxmox.com/images/system/alpine-3.23-default_20260116_amd64.tar.xz"
+  url          = "http://download.proxmox.com/images/system/debian-13-standard_13.1-2_amd64.tar.zst"
 }
 
 
@@ -79,7 +80,7 @@ resource "proxmox_virtual_environment_container" "worker_1" {
   start_on_boot = true
 
   clone {
-    vm_id = proxmox_virtual_environment_container.alpine_template.vm_id
+    vm_id = proxmox_virtual_environment_container.debian_template.vm_id
   }
 
   initialization {
@@ -100,7 +101,7 @@ resource "proxmox_virtual_environment_container" "worker_2" {
   start_on_boot = true
 
   clone {
-    vm_id = proxmox_virtual_environment_container.alpine_template.vm_id
+    vm_id = proxmox_virtual_environment_container.debian_template.vm_id
   }
 
   initialization {
@@ -121,7 +122,7 @@ resource "proxmox_virtual_environment_container" "worker_3" {
   start_on_boot = true
 
   clone {
-    vm_id = proxmox_virtual_environment_container.alpine_template.vm_id
+    vm_id = proxmox_virtual_environment_container.debian_template.vm_id
   }
 
   initialization {
@@ -142,7 +143,7 @@ resource "proxmox_virtual_environment_container" "load_balancer" {
   start_on_boot = true
 
   clone {
-    vm_id = proxmox_virtual_environment_container.alpine_template.vm_id
+    vm_id = proxmox_virtual_environment_container.debian_template.vm_id
   }
 
   initialization {
