@@ -1,8 +1,11 @@
 # Ignore terraform files
-**/.terraform/*
+**/.terraform/
 *.tfstate
 *.tfstate.*
 *.tfvars
 *.tfplan
 crash.log
 crash.*.log
+
+# Ignore ansible files
+**/.venv/

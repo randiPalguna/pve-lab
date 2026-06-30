@@ -1,0 +1,165 @@
+---
+## Configure PVE node network ##
+- name: Configure PVE node
+  hosts: pve
+  become: yes
+  
+  tasks:
+    - name: Clear any PREROUTING iptables
+      ansible.builtin.iptables:
+        table: nat
+        chain: PREROUTING
+        flush: yes
+
+    - name: DNAT port 80 to load_balancer 192.168.200.5
+      ansible.builtin.iptables:
+        table: nat
+        chain: PREROUTING
+        in_interface: nic0
+        protocol: tcp
+        destination_port: "80"
+        jump: DNAT
+        to_destination: 192.168.200.5:80
+        state: present
+
+
+## Configure the Worker Nodes ##
+- name: Configure Web Workers
+  hosts: workers
+  become: yes
+
+  tasks:
+    - name: Install Nginx (Workers)
+      apt:
+        name: nginx
+        state: present
+        update_cache: yes
+
+    - name: Deploy Worker Nginx Configuration
+      copy:
+        dest: /etc/nginx/sites-available/default
+        content: |
+          server {
+                  listen 80 default_server;
+                  listen [::]:80 default_server;
+                  root /var/www/html;
+                  index index.html index.htm index.nginx-debian.html;
+                  server_name _;
+                  location / {
+                          try_files $uri $uri/ =404;
+                  }
+          }
+      notify: Restart Nginx
+
+    - name: Create the Dashboard Generator Script
+      copy:
+        dest: /usr/local/bin/generate-dashboard.sh
+        mode: '0755'
+        content: |
+          #!/bin/sh
+          MY_HOSTNAME=$(hostname)
+          MY_IP=$(ip -4 addr show eth0 | awk '/inet / {print $2}' | cut -d/ -f1)
+          MY_OS=$(grep PRETTY_NAME /etc/os-release | cut -d '"' -f 2 || echo "Debian Linux")
+          MY_TIME=$(date "+%Y-%m-%d %H:%M:%S")
+
+          cat << EOF > /var/www/html/index.html
+          <!DOCTYPE html>
+          <html lang="en">
+          <head>
+              <meta charset="UTF-8">
+              <meta name="viewport" content="width=device-width, initial-scale=1.0">
+              <title>Dashboard - $MY_HOSTNAME</title>
+              <style>
+                  * { box-sizing: border-box; }
+                  :root { --bg: #0f172a; --card: #1e293b; --text: #f8fafc; --accent: #38bdf8; }
+                  body { background: var(--bg); color: var(--text); font-family: system-ui, -apple-system, sans-serif; display: flex; justify-content: center; align-items: center; min-height: 100vh; margin: 0; padding: 15px; }
+                  .card { background: var(--card); padding: 1.5rem; border-radius: 12px; box-shadow: 0 10px 15px -3px rgba(0, 0, 0, 0.5); border-top: 4px solid var(--accent); width: 100%; max-width: 450px; }
+                  h1 { margin-top: 0; color: var(--accent); font-size: 1.4rem; border-bottom: 1px solid #334155; padding-bottom: 15px; margin-bottom: 15px; text-align: center; }
+                  .info-row { display: flex; flex-direction: column; padding: 12px 0; border-bottom: 1px dashed #334155; gap: 6px; }
+                  .info-row:last-child { border-bottom: none; }
+                  .label { font-weight: 600; color: #94a3b8; }
+                  .value { font-family: monospace; color: #e2e8f0; background: #0f172a; padding: 8px 10px; border-radius: 6px; font-size: 0.9rem; word-break: break-word; }
+                  @media (min-width: 480px) {
+                      .info-row { flex-direction: row; justify-content: space-between; align-items: center; gap: 0; }
+                      .value { word-break: normal; }
+                  }
+              </style>
+          </head>
+          <body>
+              <div class="card">
+                  <h1>Worker Node Status</h1>
+                  <div class="info-row"><span class="label">Hostname:</span><span class="value">$MY_HOSTNAME</span></div>
+                  <div class="info-row"><span class="label">IP Address:</span><span class="value">$MY_IP</span></div>
+                  <div class="info-row"><span class="label">OS Version:</span><span class="value">$MY_OS</span></div>
+                  <div class="info-row"><span class="label">Last Updated:</span><span class="value">$MY_TIME</span></div>
+              </div>
+          </body>
+          </html>
+          EOF
+
+    - name: Execute Dashboard Generator
+      command: /usr/local/bin/generate-dashboard.sh
+
+    - name: Ensure Nginx is enabled and running
+      service:
+        name: nginx
+        state: started
+        enabled: yes
+
+  handlers:
+    - name: Restart Nginx
+      service:
+        name: nginx
+        state: restarted
+
+
+## Configure the Load Balancer ##
+- name: Configure Load Balancer
+  hosts: load_balancer
+  become: yes
+
+  tasks:
+    - name: Install Nginx (Load Balancer)
+      apt:
+        name: nginx
+        state: present
+        update_cache: yes
+
+    - name: Deploy Load Balancer Configuration
+      copy:
+        dest: /etc/nginx/sites-available/default
+        content: |
+          upstream backend_cluster {
+              server 192.168.200.2;
+              server 192.168.200.3;
+              server 192.168.200.4;
+          }
+
+          server {
+              listen 80 default_server;
+              listen [::]:80 default_server;
+              server_name _;
+
+              location / {
+                  # Proxy traffic to the upstream cluster
+                  proxy_pass http://backend_cluster;
+                  
+                  # Pass original client IP headers down to the workers
+                  proxy_set_header Host $host;
+                  proxy_set_header X-Real-IP $remote_addr;
+                  proxy_set_header X-Forwarded-For $proxy_add_x_forwarded_for;
+              }
+          }
+      notify: Restart Nginx
+
+    - name: Ensure Nginx is enabled and running
+      service:
+        name: nginx
+        state: started
+        enabled: yes
+
+  handlers:
+    - name: Restart Nginx
+      service:
+        name: nginx
+        state: restarted
